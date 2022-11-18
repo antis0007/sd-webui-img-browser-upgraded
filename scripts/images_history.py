@@ -93,10 +93,11 @@ def get_image_parameters(filename):
         with Image.open(filename) as img:
             if "parameters" in img.info:
                 params = img.info["parameters"]
-                # remove negatives (probably dont want to search those)
-                params_split = params.split("\n")
-                params = params_split[0] + "\n" + params_split[2]
-    except Exception:
+                splt = params.split("\n")
+                splt = [s for s in splt if not s.startswith("Negative prompt:")]
+                params = "\n".join(splt)
+    except Exception as e:
+        print(e)
         pass
     return params
 
@@ -104,13 +105,13 @@ def get_all_images(dir_name, sort_by, search):
     filenames = []
     filenames = traverse_all_files(dir_name, filenames)
 
-    tags = [t.strip() for t in search.split(",")]
+    tags = [t.strip() for t in search.lower().split(",")]
     tags = [t for t in tags if t]
 
     if tags:
         filtered = []
         for x in filenames:
-            p = get_image_parameters(x)
+            p = get_image_parameters(x).lower()
             if all([t in p for t in tags]):
                 filtered += [x]
         filenames = filtered
@@ -182,8 +183,13 @@ def change_dir(img_dir, path_recorder, load_switch, img_path_history):
     else:
         return warning, gr.update(visible=False), img_path_history, path_recorder, load_switch
 
-def export(export_folder, img_path, search, sort_by):
+def export_copy(export_folder, img_path, search, sort_by):
+    export(export_folder, img_path, search, sort_by, False)
 
+def export_move(export_folder, img_path, search, sort_by):
+    export(export_folder, img_path, search, sort_by, True)
+
+def export(export_folder, img_path, search, sort_by, move):
     gr.update(visible=True)
     filenames = get_all_images(img_path, sort_by, search)
 
@@ -193,7 +199,10 @@ def export(export_folder, img_path, search, sort_by):
 
     for f in filenames:
         gr.update(visible=True)
-        shutil.copy(f, export_folder)
+        if move:
+            shutil.move(f, export_folder)
+        else:
+            shutil.copy(f, export_folder)
 
     print("done.")
 
@@ -244,7 +253,6 @@ def create_tab(tabname):
                             delete_num = gr.Number(value=1, interactive=True, label="delete next")
                         with gr.Column(scale=3):
                             delete = gr.Button('Delete', elem_id=tabname + "_images_history_del_button")
-                        
                 with gr.Column(): 
                     with gr.Row():  
                         sort_by = gr.Radio(value="date", choices=["path name", "date"], label="sort by")   
@@ -266,7 +274,8 @@ def create_tab(tabname):
                             with gr.Column(scale=1):
                                 export_folder = gr.Textbox(value="", label="Folder")
                             with gr.Column(scale=3):
-                                export_btn = gr.Button('Export All to folder')
+                                export_copy_btn = gr.Button('Copy All to folder')
+                                export_move_btn = gr.Button('Move All to folder')
                     with gr.Row():
                         collected_warning = gr.HTML()                       
                             
@@ -323,7 +332,8 @@ def create_tab(tabname):
     img_file_name.change(fn=lambda : "", inputs=None, outputs=[collected_warning])
 
     # export
-    export_btn.click(export, inputs=[export_folder, img_path, search, sort_by], outputs=None)
+    export_copy_btn.click(export_copy, inputs=[export_folder, img_path, search, sort_by], outputs=None)
+    export_move_btn.click(export_move, inputs=[export_folder, img_path, search, sort_by], outputs=None)
    
     hidden.change(fn=modules.extras.run_pnginfo, inputs=[hidden], outputs=[info1, img_file_info, info2])
 
