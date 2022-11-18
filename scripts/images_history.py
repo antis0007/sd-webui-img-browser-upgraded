@@ -91,11 +91,10 @@ def get_image_parameters(filename):
     params = ""
     try:
         with Image.open(filename) as img:
-            if "parameters" in img.info:
-                params = img.info["parameters"]
-                splt = params.split("\n")
-                splt = [s for s in splt if not s.startswith("Negative prompt:")]
-                params = "\n".join(splt)
+            _, params, _ = modules.extras.run_pnginfo(img)
+            splt = params.split("\n")
+            splt = [s for s in splt if not s.startswith("Negative prompt:")]
+            params = "\n".join(splt)
     except Exception as e:
         print(e)
         pass
