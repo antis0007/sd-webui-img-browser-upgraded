@@ -1,7 +1,7 @@
 import os
 import shutil
 import time
-import stat
+import hashlib
 import gradio as gr
 import modules.extras
 import modules.ui
@@ -9,7 +9,9 @@ from modules.shared import opts, cmd_opts
 from modules import shared, scripts
 from modules import script_callbacks
 from pathlib import Path
-from typing import List, Tuple
+import shutil
+from PIL import Image
+import glob
 
 faverate_tab_name = "Favorites"
 tabs_list = ["txt2img", "img2img", "Extras", faverate_tab_name, "Others"]
@@ -79,33 +81,51 @@ def delete_image(delete_num, name, filenames, image_index, visible_num):
             i += 1
     return new_file_list, 1, visible_num
 
-def traverse_all_files(curr_path, image_list) -> List[Tuple[str, os.stat_result]]:
-    f_list = [(os.path.join(curr_path, entry.name), entry.stat()) for entry in os.scandir(curr_path)]
-    for f_info in f_list:
-        fname, fstat = f_info
-        if os.path.splitext(fname)[1] in image_ext_list:
-            image_list.append(f_info)
-        elif stat.S_ISDIR(fstat.st_mode):
-            image_list = traverse_all_files(fname, image_list)
+def traverse_all_files(curr_path, image_list):
+    for f in os.listdir(curr_path):
+        if any([f.endswith(ext) for ext in image_ext_list]):
+            image_list.append(os.path.join(curr_path, f))
     return image_list
 
+def get_image_parameters(filename):
+    params = ""
+    try:
+        with Image.open(filename) as img:
+            _, params, _ = modules.extras.run_pnginfo(img)
+            splt = params.split("\n")
+            splt = [s for s in splt if not s.startswith("Negative prompt:")]
+            params = "\n".join(splt)
+    except Exception as e:
+        print(e)
+        pass
+    return params
 
-def get_all_images(dir_name, sort_by, keyword):
-    fileinfos = traverse_all_files(dir_name, [])
-    keyword = keyword.strip(" ")
-    if len(keyword) != 0:
-        fileinfos = [x for x in fileinfos if keyword.lower() in x[0].lower()]
+def get_all_images(dir_name, sort_by, search):
+    filenames = []
+    filenames = traverse_all_files(dir_name, filenames)
+
+    tags = [t.strip() for t in search.lower().split(",")]
+    tags = [t for t in tags if t]
+
+    if tags:
+        filtered = []
+        for x in filenames:
+            p = get_image_parameters(x).lower()
+            if all([t in p for t in tags]):
+                filtered += [x]
+        filenames = filtered
+
     if sort_by == "date":
-        fileinfos = sorted(fileinfos, key=lambda x: -x[1].st_mtime)
+        filenames = [(os.path.getmtime(file), file) for file in filenames ]
+        sort_array = sorted(filenames, key=lambda x:-x[0])
+        filenames = [x[1] for x in sort_array]
     elif sort_by == "path name":
-        fileinfos = sorted(fileinfos)
-
-    filenames = [finfo[0] for finfo in fileinfos]
+        sort_array = sorted(filenames)
     return filenames
 
-def get_image_page(img_path, page_index, filenames, keyword, sort_by):
+def get_image_page(img_path, page_index, filenames, search, sort_by):
     if page_index == 1 or page_index == 0 or len(filenames) == 0:
-        filenames = get_all_images(img_path, sort_by, keyword)
+        filenames = get_all_images(img_path, sort_by, search)
     page_index = int(page_index)
     length = len(filenames)
     max_page_index = length // num_of_imgs_per_page + 1
@@ -162,6 +182,29 @@ def change_dir(img_dir, path_recorder, load_switch, img_path_history):
     else:
         return warning, gr.update(visible=False), img_path_history, path_recorder, load_switch
 
+def export_copy(export_folder, img_path, search, sort_by):
+    export(export_folder, img_path, search, sort_by, False)
+
+def export_move(export_folder, img_path, search, sort_by):
+    export(export_folder, img_path, search, sort_by, True)
+
+def export(export_folder, img_path, search, sort_by, move):
+    gr.update(visible=True)
+    filenames = get_all_images(img_path, sort_by, search)
+
+    print(f"Copying {len(filenames)} images to '{export_folder}' ... ", end = '')
+
+    os.makedirs(export_folder, exist_ok = True)
+
+    for f in filenames:
+        gr.update(visible=True)
+        if move:
+            shutil.move(f, export_folder)
+        else:
+            shutil.copy(f, export_folder)
+
+    print("done.")
+
 def create_tab(tabname):
     custom_dir = False
     path_recorder = []
@@ -209,11 +252,10 @@ def create_tab(tabname):
                             delete_num = gr.Number(value=1, interactive=True, label="delete next")
                         with gr.Column(scale=3):
                             delete = gr.Button('Delete', elem_id=tabname + "_images_history_del_button")
-                        
                 with gr.Column(): 
                     with gr.Row():  
                         sort_by = gr.Radio(value="date", choices=["path name", "date"], label="sort by")   
-                        keyword = gr.Textbox(value="", label="keyword")                 
+                        search = gr.Textbox(value="", label="search")
                     with gr.Row():
                         with gr.Column():
                             img_file_info = gr.Textbox(label="Generate Info", interactive=False, lines=6)
@@ -226,6 +268,13 @@ def create_tab(tabname):
                             send_to_buttons = modules.generation_parameters_copypaste.create_buttons(["txt2img", "img2img", "inpaint", "extras"])
                         except:
                             pass
+                    with gr.Row():
+                        with gr.Accordion("Export", open=False):
+                            with gr.Column(scale=1):
+                                export_folder = gr.Textbox(value="", label="Folder")
+                            with gr.Column(scale=3):
+                                export_copy_btn = gr.Button('Copy All to folder')
+                                export_move_btn = gr.Button('Move All to folder')
                     with gr.Row():
                         collected_warning = gr.HTML()                       
                             
@@ -263,14 +312,14 @@ def create_tab(tabname):
     prev_page.click(lambda p, s: (p - 1, -s), inputs=[page_index, turn_page_switch], outputs=[page_index, turn_page_switch])
     end_page.click(lambda s: (-1, -s), inputs=[turn_page_switch], outputs=[page_index, turn_page_switch])    
     load_switch.change(lambda s:(1, -s), inputs=[turn_page_switch], outputs=[page_index, turn_page_switch])
-    keyword.submit(lambda s:(1, -s), inputs=[turn_page_switch], outputs=[page_index, turn_page_switch])
+    search.submit(lambda s:(1, -s), inputs=[turn_page_switch], outputs=[page_index, turn_page_switch])
     sort_by.change(lambda s:(1, -s), inputs=[turn_page_switch], outputs=[page_index, turn_page_switch])
     page_index.submit(lambda s: -s, inputs=[turn_page_switch], outputs=[turn_page_switch])
     renew_page.click(lambda s: -s, inputs=[turn_page_switch], outputs=[turn_page_switch])
 
     turn_page_switch.change(
         fn=get_image_page, 
-        inputs=[img_path, page_index, filenames, keyword, sort_by], 
+        inputs=[img_path, page_index, filenames, search, sort_by],
         outputs=[filenames, page_index, history_gallery, img_file_name, img_file_time, img_file_info, visible_img_num, warning_box]
     )
     turn_page_switch.change(fn=None, inputs=[tabname_box], outputs=None, _js="images_history_turnpage")
@@ -279,7 +328,11 @@ def create_tab(tabname):
     # other funcitons
     set_index.click(show_image_info, _js="images_history_get_current_img", inputs=[tabname_box, image_index, page_index, filenames], outputs=[img_file_name, img_file_time, image_index, hidden])
     set_index.click(fn=lambda:(gr.update(visible=True), gr.update(visible=True)), inputs=None, outputs=[delete_panel, button_panel]) 
-    img_file_name.change(fn=lambda : "", inputs=None, outputs=[collected_warning])  
+    img_file_name.change(fn=lambda : "", inputs=None, outputs=[collected_warning])
+
+    # export
+    export_copy_btn.click(export_copy, inputs=[export_folder, img_path, search, sort_by], outputs=None)
+    export_move_btn.click(export_move, inputs=[export_folder, img_path, search, sort_by], outputs=None)
    
     hidden.change(fn=modules.extras.run_pnginfo, inputs=[hidden], outputs=[info1, img_file_info, info2])
 
