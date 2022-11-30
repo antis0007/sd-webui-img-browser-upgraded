@@ -14,7 +14,7 @@ from PIL import Image
 import glob
 
 faverate_tab_name = "Favorites"
-tabs_list = ["txt2img", "img2img", "Extras", faverate_tab_name, "Others"]
+tabs_list = ["txt2img", "img2img", "txt2img-grids", "img2img-grids", "Extras", faverate_tab_name, "Others"] #txt2img-grids and img2img-grids added by HaylockGrant
 num_of_imgs_per_page = 0
 loads_files_num = 0
 path_recorder_filename = os.path.join(scripts.basedir(), "path_recorder.txt")
@@ -212,6 +212,10 @@ def create_tab(tabname):
         dir_name = opts.outdir_txt2img_samples
     elif tabname == "img2img":
         dir_name = opts.outdir_img2img_samples
+    elif tabname == "txt2img-grids":    #added by HaylockGrant to add a new tab for grid images
+        dir_name = opts.outdir_txt2img_grids
+    elif tabname == "img2img-grids":    #added by HaylockGrant to add a new tab for grid images
+        dir_name = opts.outdir_img2img_grids
     elif tabname == "Extras":
         dir_name = opts.outdir_extras_samples
     elif tabname == faverate_tab_name:
